@@ -9,7 +9,6 @@ vga80:
         STA     RDCVEC+1
 
         LDA     #0
-        STA     ctrlcode
         STA     quelen
         LDA     #$80
         STA     ModeExtension
@@ -17,7 +16,6 @@ vga80:
         STA     VgaCtrl
         LDA     #DefaultAttrib
         STA     attrib
-        JSR     exevdu26
 vga80l1:
         LDA     #12
         JMP     $FFF4
@@ -34,93 +32,63 @@ vga80l1:
 ;      0    6    7   8   9   #A  #B  #C  #D  #E  #F  #15  #1B
 
         ; TEST FOR CONTROL CODES
-LFCEA:          ldx     quelen          ; check if queue should be filled
+LFCEA:          ldx     quelen          ; check if character must be stored in the queue
                 beq     notque          ; no, continue with printing
-                sta     queue,x         ; store in queue (stores in backward direction, so last param is first in queue!)
-                dec     quelen          ; decrement queue counter       
-                beq     exequete        ; queue is full, execute the command
-                rts                     ; otherwise end routine
-
-exequete:       lda     ctrlcode        ; load the code to execute
-                cmp     #31             ; is it 31,x,y (goto x,y)
-                bne     exe1            ; no, test next
-                jmp     exevdu31
-exe1:           cmp     #17             ; is it 17,c (colour c)
-                bne     exe2            ; no, test next
-                jmp     exevdu17
-exe2:           cmp     #28             ; is it 28,x,y,h,w (define text window)
-                bne     exe3            ; no, next test
-                jmp     exevdu28        
-exe3:           cmp     #22             ; is it 22,m (set graphics mode)
-                bne     exe4            ; no, next test
-                jmp     exevdu22        
-exe4:           cmp     #25             ; is it 25,m,x,y (plot command)
-                bne     exe5            ; no, next test
-                jmp     exevdu25        
-exe5:           cmp     #18             ; is it 18,m,c (set graphics colour)
-                bne     exe6
-                jmp     exevdu18
-exe6:           lda     #0              ; no code? strange
-                sta     ctrlcode        ; clear queue
-                rts                     ; end routine
+                cmp     #'['            ; test for bracket i.e. start of sequence
+                bne     q1              ; no, continue 
+                cpx     #1              ; is this the first character after the <ESC>
+                beq     qstore          ; yes, store it also in the queue
+                bne     qproc           ; else consider this as end-of-sequence
                 
-notque:         cmp     #22             ; is it vdu 22
-                beq     q17             ; why not? It's also 1 byte queue length :-)
-                cmp     #25             ; is it vdu 25
-                beq     q25
-                cmp     #31             ; is it vdu 31
-                beq     q31
-                cmp     #17             ; is it vdu 17
-                beq     q17
-                cmp     #18             ; is it vdu 18
-                beq     q31             ; also two parameter bytes
-                cmp     #28             ; is it vdu 28
-                beq     q28
-                cmp     #26             ; is it vdu 26
-                bne     t16
-                jmp     exevdu26
-t16:            cmp     #16
-                bne     t06
-                jmp     exevdu16
 
-t06:    cmp     #$06            ; Is it <ACK> ?
-        beq     LFD0B           ; ..yes, reset the 6847 VDG to alphanumeric
-                                ; mode and clear the NAK flag
-        cmp     #$15            ; Is it <NAK> ?
-        beq     LFD11           ; ..yes, set the NAK flag
-        ldy     $E0             ; Get cursor postion - is the NAK flag bit 7 set ?
-        bmi     LFD19           ; ..yes, printing not allowed - return
-        cmp     #$1B            ; Is it <ESC> ?
-        beq     LFD0B           ; ..yes, reset VDG to alphanumeric mode and clear NAK
-        cmp     #$07            ; Is it <BEL> ?
-        beq     LFD1A           ; ..yes, sound a bleep
-        jsr     LFD44           ; Invert char at current cursor position
-        ldx     #$0A            ; Point to the control code table at #FED5
-        jsr     LFEC5           ; Test character for executable control code
-        bne     LFD29           ; ..it's not an executable control code
-                                ; so print it if >#1F, otherwise return
-        jmp     LFEB7           ; ..executable control code - get the code's
-                                ; execution address and jump to it
+                ; Now we are storing data into the queue. Store only digits and semi-colons
+q1:             cmp     #';'            ; is it a semi-colon?
+                beq     qstore          ; yes, store it
+                cmp     #$30            ; compare with digit 0
+                bmi     qproc           ; it's not a digit, start processing the queue
+                cmp     #$3A            ; compare with digit 9
+                bpl     qproc           ; it's not a digit, start processing the queue
+qstore:         ldx     quelen          ; load queue pointer
+                sta     queue,x         ; store character in queue
+                inc     quelen          ; increment queue pointer
+                bmi     qproc           ; limit of 127 characters reached, start processing the queue
+                rts                     ; end of write routine (for now)
 
-;               initialize the vdu queues
-q25:            sta     ctrlcode        ; save the code
-                lda     #5              ; load queue length
-                bne     setquelen       ; set queue length and continue
+notque:         cmp     #$1B            ; is it escape
+                bne     t06             ; no, continue with original print routine
+                sta     queue           ; store in queue
+                ldx     #1              ; initialize the queue
+                stx     quelen          ; 
+                rts                     ; end of print routine
 
-q28:            sta     ctrlcode        ; could be the start of text window code
-                lda     #4
-                bne     setquelen       ; set number of parameters
+; Start processing the queue
+qproc:          jsr     qdecode         ; read the parameters and store them as digits in the queue
+                dey                     ; calculate queue length
+                dey
+                sty     quelen          ; save the queue length
+                jsr     exequete        ; execute the code
+                lda     #0              ; reset queue length
+                sta     quelen
+                rts                     ; end of routine
 
-q31:            sta     ctrlcode
-                lda     #2              ; number of parameters
-                bne     setquelen
-
-q17:            sta     ctrlcode
-                lda     #1
-setquelen:      sta     quelen
-                lda     ctrlcode
-                rts
-
+t06:            cmp     #$06            ; Is it <ACK> ?
+                beq     LFD0B           ; ..yes, reset the 6847 VDG to alphanumeric
+                                        ; mode and clear the NAK flag
+                cmp     #$15            ; Is it <NAK> ?
+                beq     LFD11           ; ..yes, set the NAK flag
+                ldy     $E0             ; Get cursor postion - is the NAK flag bit 7 set ?
+                bmi     LFD19           ; ..yes, printing not allowed - return
+                cmp     #$1B            ; Is it <ESC> ?
+                beq     LFD0B           ; ..yes, reset VDG to alphanumeric mode and clear NAK
+                cmp     #$07            ; Is it <BEL> ?
+                beq     LFD1A           ; ..yes, sound a bleep
+                jsr     LFD44           ; Invert char at current cursor position
+                ldx     #$0A            ; Point to the control code table at #FED5
+                jsr     LFEC5           ; Test character for executable control code
+                bne     LFD29           ; ..it's not an executable control code
+                                        ; so print it if >#1F, otherwise return
+                jmp     LFEB7           ; ..executable control code - get the code's
+                                        ; execution address and jump to it
 
 
 ;    Handle <ESC> subroutine
@@ -1191,3 +1159,245 @@ vga32l1:        LDA     $FF9E,Y
                 STA     ModeExtension
                 STA     VgaCtrl
                 JMP     vga80l1
+
+; Read the characters in the queue and convert them to hexadecimal codes; these will be stored in the queue. When this routine is
+; called the queue starts with <ESC>[ followed by max 127 characters of the sequence.
+qdecode:        sta     queue           ; this is the last character of the sequence. Store it as command
+                lda     #0              ; location queue + 1 will be used as workspace for decoding
+                sta     queue+1         ; clear this workspace
+                ldx     #2              ; load (read) pointer to start of sequence parameters
+                ldy     #2              ; load (write) pointer to start of decoded data
+qdec1:          lda     queue,x         ; load character
+                cmp     #';'            ; is it a semi-colon?
+                bne     qdec3           ; no, continue
+qdec2:          lda     queue+1         ; load decoded data
+                sta     queue,y         ; store in queue (yes, we overwrite the original sequence but that's no problem)
+                lda     #0              ; clear workspace
+                sta     queue+1       
+                iny                     ; increment write pointer
+                inx                     ; increment read pointer
+                cpx     quelen          ; last character read?
+                bne     qdec1           ; no, process next character 
+                rts                     ; end of decode, return
+qdec3:          sec                     ; set carry for substraction
+                sbc     #'0'            ; "convert" to binary value of ascii byte
+                jsr     mul10           ; add this to the workspace
+                inx                     ; increment read pointer
+                cpx     quelen          ; last character read?
+                bne     qdec1           ; no, read the next one
+                dex                     ; decrement the read pointer
+                bne     qdec2           ; store it and end routine
+
+; Multiply the value of the workspace byte by 10 and add the contents of A
+mul10:          pha                     ; save A
+                lda     queue+1         ; 
+                asl                     ; multiply by 2
+                sta     temp            ; temp store in TEMP
+                asl                     ; again multiply by 2 (*4)
+                asl                     ; again multiply by 2 (*8)
+                clc
+                adc     temp            ; as result, A = x*8 + x*2
+                sta     queue+1         ; store
+                pla                     ; restore A
+                clc
+                adc     queue+1         ; add it to calculated byte
+                sta     queue+1         ; store
+                rts                     ; finished, return
+
+; Execute the command
+exequete:       lda     queue           ; load command byte
+                ldx     queue+1         ; reset index register to start of parameters
+                cmp     #'H'            ; check for command cursor position
+                bne     exe1
+                jmp     cursor_pos
+exe1:           cmp     #'f'            ; check for command cursor position
+                bne     exe2
+                jmp     cursor_pos
+exe2:           cmp     #'A'            ; check for command cursor up
+                bne     exe3
+                jmp     cursor_up
+exe3:           cmp     #'B'            ; check for command cursor down
+                bne     exe4
+                jmp     cursor_down
+exe4:           cmp     #'C'            ; check for command cursor forward
+                bne     exe5
+                jmp     cursor_forw
+exe5:           cmp     #'D'            ; check for command cursor backward
+                bne     exe6
+                jmp     cursor_back
+exe6:           cmp     #'s'            ; check for command cursor position save
+                bne     exe7
+                jmp     cursor_save
+exe7:           cmp     #'u'            ; check for command cursor position restore
+                bne     exe8
+                jmp     cursor_restore
+exe8:           cmp     #'K'            ; check for command erase line
+                bne     exe9
+                jmp     erase_line
+exe9:           cmp     #'J'            ; check for clear screen
+                bne     exe10     
+                jmp     clear_screen
+exe10:          cmp     #'m'            ; check for graphics mode
+                bne     exe11
+                jmp     graphics_mode
+exe11:
+                rts                     ; 
+
+; Move the cursor to the specified position
+cursor_pos:     jmp     exevdu31        ; set cursor to new position
+
+; Move the cursor up  **TODO**
+cursor_up:      lda     curYpos         ; load current Y position               
+                sec                     ; set carry for substraction
+                sbc     queue+2         ; substract number of lines
+                bpl     cursor_up1      ; jump if not above screen border
+                lda     #0              ; otherwise load top line number 
+cursor_up1:     sta     queue+2         ; store parameter
+                jmp     exevdu31        ; set cursor to new position
+
+; Move the cursor down  **TODO**
+cursor_down:    lda     curYpos         ; load current Y position               
+                clc                     ; reset carry for addition
+                adc     queue+2         ; substract number of lines
+                cmp     #40             ; test for bottom of screen
+                bmi     cursor_down1    ; jump if not below screen border
+                lda     #39             ; otherwise load bottom line number 
+cursor_down1:   sta     queue+2         ; store parameter
+                jmp     exevdu31        ; set cursor to new position
+
+; Move the cursor backward
+cursor_back:    lda     curXpos         ; load current X position               
+                sec                     ; set carry for substraction
+                sbc     queue+2         ; substract number of lines
+                bpl     cursor_back1    ; jump if not before screen border
+                lda     #0              ; otherwise load top line number 
+cursor_back1:   sta     queue+2         ; store parameter
+                jmp     exevdu31        ; set cursor to new position
+
+; Move the cursor forward
+cursor_forw:    lda     curXpos         ; load current X position               
+                clc                     ; reset carry for addition
+                adc     queue+2         ; substract number of lines
+                cmp     #80             ; test for bottom of screen
+                bmi     cursor_forw1    ; jump if not below screen border
+                lda     #79             ; otherwise load bottom line number 
+cursor_forw1:   sta     queue+2         ; store parameter
+                jmp     exevdu31        ; set cursor to new position
+
+; Save cursor position  
+cursor_save:    lda     curXpos         ; copy cursor position
+                sta     saveXpos
+                lda     curYpos
+                sta     saveYpos
+                lda     curYpos+1
+                sta     saveYpos+1
+                rts                     ; end of routine
+
+cursor_restore: lda     saveXpos        ; copy old cursor position
+                sta     curXpos         ; store in queue
+                lda     saveYpos        ; same for Y position
+                sta     curYpos
+                lda     saveYpos+1      ; same for Y position
+                sta     curYpos+1
+                rts
+
+; Clear screen
+clear_screen:   jmp     LFD69           ; do your job
+
+; Clear line (from cursor position until end of the line)
+erase_line:     ldy     $e0             ; load current cursor position
+                lda     #20             ; load space character
+erase_line1:    cmp     #79             ; check for end of line
+                beq     erase_line2     ; jmp when at the end of line
+                sta     ($df),y         ; erase character
+                iny                     ; next position
+                bne     erase_line1     ; jumps always
+erase_line2:    rts                     ; end of routine
+                
+graphics_mode:  ldy     #0              ; init pointer
+gm_loop:        iny                     ; increment pointer
+                lda     queue+1,y       ; load attribute data
+                beq     gm_attr_off     ; #0 = all attributes off
+                cmp     #4              ; #4 = underline on
+                beq     gm_underline    
+                cmp     #7              ; #7 = reverse video
+                beq     gm_reverse
+                cmp     #8              ; #8 = consealed on
+                beq     gm_consealed
+                cmp     #30             ; #30 - #37 is forground colour
+                bmi     gm_next         ; if < 30 then ignore code
+                cmp     #38             
+                bpl     gm_bgcol        ; if >= 38 then test for background colour
+                tax                     ; move colour code to x-index
+                lda     attrib          ; load current attribute
+                and     #$F8            ; clear fg colour bits
+                ora     colourtabfg-30,x; set new fg colour bits
+                sta     attrib
+                jmp     gm_next         ; continue
+gm_bgcol:       cmp     #40             ; #40 - #47 is background colour
+                bmi     gm_next         ; if < 40 then ignore code
+                cmp     #48             ; if >= 48 then also ignore code
+                bpl     gm_next
+                tax                     ; move colour code to x-index
+                lda     attrib          ; load current attribute
+                and     #$8F            ; clear fg colour bits
+                ora     colourtabbg-40,x; set new fg colour bits
+                sta     attrib
+gm_next:        cpy     quelen          ; any mode parameters left
+                bne     gm_loop         ; yes, process the next parameter
+gm_end:         rts                     ; else return
+
+gm_attr_off:    lda     #DefaultAttrib  ; restore attributes to default
+                sta     attrib          ; set in workspace
+                bne     gm_next         ; check for next parameter
+
+gm_underline:   lda     attrib          ; load current attribute
+                ora     #8              ; set underline bit
+                sta     attrib          ; set in workspace
+                bne     gm_next         ; check for next parameter
+
+gm_reverse:     lda     attrib          ; load current attrib
+                and     #$07            ; extract current foreground colour
+                asl                     ; move to upper nibble
+                asl
+                asl
+                asl
+                sta     temp            ; store in workspace
+gm_reverse1:    lda     attrib          ; reload current attrib
+                and     #$70            ; extract current background colour
+                clc                     ; clear carry for moving
+                lsr                     ; move to lower nibble
+                lsr
+                lsr
+                lsr
+                ora     temp            ; merge with temp data
+                sta     temp            
+                lda     attrib          ; reload current attrib
+                and     #$88            ; clear all colour bits
+                ora     temp            ; merge with new colour data
+                sta     attrib          ; write new attribute
+                jmp     gm_next         ; process next parameter
+
+gm_consealed:   lda     attrib          ; load current attribute
+                and     #$F8            ; clear fg colour bits
+                sta     temp            ; store in workspace
+                jmp     gm_reverse1     ; 
+
+colourtabfg:    .byte   $00             ; black
+                .byte   $04             ; red
+                .byte   $02             ; green
+                .byte   $06             ; yellow
+                .byte   $01             ; blue
+                .byte   $05             ; magenta
+                .byte   $03             ; cyan
+                .byte   $07             ; white
+                .word   $0000           ; ignored, also black
+colourtabbg:    .byte   $00             ; black
+                .byte   $40             ; red
+                .byte   $20             ; green
+                .byte   $60             ; yellow
+                .byte   $10             ; blue
+                .byte   $50             ; magenta
+                .byte   $30             ; cyan
+                .byte   $70             ; white
+                .word   $0000           ; ignored, also black

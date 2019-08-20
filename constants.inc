@@ -15,14 +15,21 @@ VgaCtrl       = GODIL + 4
 
 ; Workspace
 vduque   = $500
-ctrlcode = vduque+0
+temp     = vduque+0
 quelen   = vduque+1
-queue    = vduque+2
-attrib   = vduque+15
-topY     = vduque+16
-rightX   = vduque+17
-bottomY  = vduque+18
-leftX    = vduque+19
+attrib   = vduque+2
+fgcolor  = vduque+3
+bgcolor  = vduque+4
+saveXpos = vduque+5
+saveYpos = vduque+6
+bottomY  = vduque+7 
+rightX   = vduque+8
+leftX    = vduque+9
+topY     = vduque+10
+ctrlcode = vduque+11
+curXpos  = $e0
+curYpos  = $de
+queue    = vduque+9  ; 129 bytes!
 
 ; MOS Entry addresses
 WRCVEC = $0208

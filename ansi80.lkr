@@ -1,7 +1,7 @@
 MEMORY
 {
    RAM1:  start = $05ea, size = $16, fill = no;
-   RAM2:  start = $0600, size = $800, fill = no;
+   RAM2:  start = $0600, size = $1000, fill = no;
 }
 
 SEGMENTS
