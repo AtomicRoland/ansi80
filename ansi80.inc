@@ -181,10 +181,19 @@ LFD42:  sty     $E0             ; Update current cursor position register
 ;    ?#E1.
 ;  - A, X, Y registers preserved.
 
+cursor_on:
 LFD44:
         pha                     ; Save character in accumulator
         lda ($DE),Y             ; Get character at current print position
         eor $E1                 ; Mask it
+        sta ($DE),Y             ; ..and return it to the screen
+        pla                     ; Restore character to accumulator
+        rts
+
+cursor_off:
+        pha                     ; Save character in accumulator
+        lda ($DE),Y             ; Get character at current print position
+        and #$7F                ; Mask it
         sta ($DE),Y             ; ..and return it to the screen
         pla                     ; Restore character to accumulator
         rts
@@ -832,16 +841,13 @@ LFDF2K:
 
 ;               Execute the extended VDU codes
 
-; set cursor position to x (queue+2) , y (queue+1)
-exevdu31:       ldy     #0              ; cursor off at old position
-                lda     ($de),y
-                and     #$7f
-                sta     ($de),y         
+; set cursor position to x (queue+2) , y (queue+3)
+exevdu31:       jsr     cursor_off      ; cursor off at old position
                 lda     #$80            ; cursor position to y
                 sta     $df
                 lda     #$00
                 sta     $de
-                ldy     queue+1
+                ldy     queue+3
                 beq     vdu31l2         ; jump if y=0 (upper row)
 vdu31l1:        clc
                 lda     $de
@@ -1246,43 +1252,67 @@ exe11:
 ; Move the cursor to the specified position
 cursor_pos:     jmp     exevdu31        ; set cursor to new position
 
-; Move the cursor up  **TODO**
-cursor_up:      lda     curYpos         ; load current Y position               
-                sec                     ; set carry for substraction
-                sbc     queue+2         ; substract number of lines
-                bpl     cursor_up1      ; jump if not above screen border
-                lda     #0              ; otherwise load top line number 
-cursor_up1:     sta     queue+2         ; store parameter
-                jmp     exevdu31        ; set cursor to new position
+; Move the cursor up  
+cursor_up:      ldy     curXpos
+                jsr     cursor_off      ; turn cursor off
+                ldy     queue+2         ; load number of rows
+cursor_up0:     lda     $de             ; check low byte upper row
+                bne     cursor_up1      ; not upper row
+                lda     $df             ; check high byte of upper row
+                cmp     #$80             
+                beq     cursor_up2      ; it's upper row, end routine
+cursor_up1:     sec                     ; calculate address of previous row
+                lda     $de
+                sbc     #NUMCOLS
+                sta     $de
+                lda     $df
+                sbc     #0
+                sta     $df
+                dey                     ; check if more lines to move
+                bne     cursor_up0      ; yes, repeat loop
+cursor_up2:     rts                     ; end of routine
 
-; Move the cursor down  **TODO**
-cursor_down:    lda     curYpos         ; load current Y position               
-                clc                     ; reset carry for addition
-                adc     queue+2         ; substract number of lines
-                cmp     #40             ; test for bottom of screen
-                bmi     cursor_down1    ; jump if not below screen border
-                lda     #39             ; otherwise load bottom line number 
-cursor_down1:   sta     queue+2         ; store parameter
-                jmp     exevdu31        ; set cursor to new position
+; Move the cursor down
+cursor_down:    ldy     curXpos
+                jsr     cursor_off      ; turn cursor off
+                ldy     queue+2         ; load number of rows
+cursor_down0:   lda     $de             ; check for low byte bottom row
+                cmp     #$30            ; bottom row starts at $8C30
+                bne     cursor_down1    ; not bottom row
+                lda     $df
+                cmp     #$8C
+                beq     cursor_down2    ; it's bottom row, eind routine
+cursor_down1:   clc                     ; clear carry for addition
+                lda     $de             ; calculate address of next row
+                adc     #NUMCOLS                
+                sta     $de
+                lda     $df
+                adc     #0
+                sta     $df
+                dey                     ; check if more lines to move
+                bne     cursor_down0    ; yes, repeat loop
+cursor_down2:   rts                     ; end of routine
+
 
 ; Move the cursor backward
 cursor_back:    lda     curXpos         ; load current X position               
                 sec                     ; set carry for substraction
                 sbc     queue+2         ; substract number of lines
-                bpl     cursor_back1    ; jump if not before screen border
-                lda     #0              ; otherwise load top line number 
-cursor_back1:   sta     queue+2         ; store parameter
-                jmp     exevdu31        ; set cursor to new position
+                bpl     cursor_back1    ; jump if not before left screen border
+                lda     #0              ; otherwise load left column number 
+cursor_back1:   ldy     curXpos
+                jsr     cursor_off      ; turn cursor off
+                sta     curXpos         ; set cursor to new position
+                rts
 
 ; Move the cursor forward
 cursor_forw:    lda     curXpos         ; load current X position               
                 clc                     ; reset carry for addition
                 adc     queue+2         ; substract number of lines
-                cmp     #80             ; test for bottom of screen
+                cmp     #80             ; test for right border of screen
                 bmi     cursor_forw1    ; jump if not below screen border
-                lda     #79             ; otherwise load bottom line number 
-cursor_forw1:   sta     queue+2         ; store parameter
-                jmp     exevdu31        ; set cursor to new position
+                lda     #79             ; otherwise load right column number 
+cursor_forw1:   jmp     cursor_back1    ; set cursor to new position
 
 ; Save cursor position  
 cursor_save:    lda     curXpos         ; copy cursor position
