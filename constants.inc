@@ -14,7 +14,7 @@ VgaCtrl       = GODIL + 4
 
 
 ; Workspace
-vduque   = $500
+vduque   = $4F0
 temp     = vduque+0
 quelen   = vduque+1
 attrib   = vduque+2
@@ -29,11 +29,23 @@ topY     = vduque+10
 ctrlcode = vduque+11
 curXpos  = $e0
 curYpos  = $de
-queue    = vduque+9  ; 129 bytes!
+queue    = $500         ; ANSI SEQUENCE QUEUE
+INPUTBUF = $580         ; KEYBOARD INPUT BUFFER
+KEYRDPTR = $84          ; KEYBOARD READ POINTER
+KEYWRPTR = $85          ; KEYBOARD WRITE POINTER
+ZP       = $86          ; ZERO PAGE WORK SPACE
+LOCKSTAT = $E7          ; STATUS OF CAPS LOCK KEY
+LEDCTRL  = $BFE0        ; CONTROL REGISTER FOR LED STATUS
+LEDDATA  = $BFE1        ; DATA REGISTER FOR LED STATUS
+PORTB    = $B001        ; PORT B OF 8255 PPI (for shift + ctrl key) 
+PORTC    = $B002        ; PORT C OF 8255 PPI (for rept key)
 
 ; MOS Entry addresses
-WRCVEC = $0208
-RDCVEC = $020A
+WRCVEC   = $0208
+RDCVEC   = $020A
+KEYSCAN  = $FE71		; KEYBOARD SCAN ROUTINE
+WAIT     = $FB8C        ; SHORT WAIT
+
 
 NUMROWS = 40
 NUMCOLS = 80

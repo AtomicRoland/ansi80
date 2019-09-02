@@ -15,6 +15,9 @@ AtmHeader:
         .SEGMENT "CODE"
 
 StartAddr:
+        jmp     vga80       ; initialize ansi80 vdu driver with default keyboard input
+        jmp     scan80      ; initialize alternative keyboard input (stores data in input buffer)
         .include "ansi80.inc"
+        .include "ansikb.inc"
 EndAddr:
 
