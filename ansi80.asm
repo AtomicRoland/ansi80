@@ -19,5 +19,6 @@ StartAddr:
         jmp     scan80      ; initialize alternative keyboard input (stores data in input buffer)
         .include "ansi80.inc"
         .include "ansikb.inc"
+        .include "ansifnt.inc"
 EndAddr:
 

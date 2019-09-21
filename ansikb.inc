@@ -61,9 +61,8 @@ KEYLEDOFF:          LDA     LEDDATA         ; LOAD CURRENT DATA
 ; Convert the scancode to ascii code
 ; The scancode is in the Y register. On return the ascii value will be in A.
 
-KEY2ASCII:          CPY     #5              ; CHECK FOR CAPS LOCK KEY
-                    BEQ     LOCKEY          ; JMP IF CAPS LOCK
-                    LDA     #$00            ; CLEAR ACCU
+KEY2ASCII:          JMP     SPECIALKEY      ; CHECK (and handle) SPECIAL KEYS
+KEY2ASCI1:          LDA     #$00            ; CLEAR ACCU
                     CPY     #$21            ; TEST FOR 'A' KEY
                     BMI     KEY0            ; JUMP IF SCAN CODE BEFORE 'A' KEY
                     CPY     #$3B            ; TEST FOR 'Z' KEY
@@ -90,6 +89,20 @@ KEY2:               LDA     #<KEY_TABLE     ; SET ADDRESS OF DEFAULT TABLE IN ZE
 KEY3:               LDA     (ZP),Y          ; LOAD THE CORRESPONDING ASCII VALUE
                     RTS                     ; RETURN (TO MAIN LOOP)
 
+; CHECK IF SPECIAL KEY PRESSED
+; For now it only handles the CAPS LOCK key, the two cursor keys and the COPY key.
+
+SPECIALKEY:         CPY     #$05            ; CHECK FOR CAPS LOCK KEY
+                    BEQ     LOCKEY          ; JMP IF CAPS LOCK
+                    CPY     #$06            ; TEST FOR HORIZONAL ARROW
+                    BEQ     HCURSOR
+                    CPY     #$07            ; TEST FOR VERTICAL ARROW
+                    BEQ     VCURSOR
+                    CPY     #$0E            ; TEST FOR COPY KEY
+                    BEQ     COPYKEY         
+                    JMP     KEY2ASCI1       ; RETURN TO MAIN ROUTINE
+                    
+
 ; CAPS LOCK KEY TOGGLES JUST THE FLAG IN ZERO PAGE AND THE LED.
 LOCKEY:             LDA     LOCKSTAT        ; LOAD LOCK STATUS ($00 = LOCK OFF, $40 = LOCK ON)
                     EOR     #$80            ; TOGGLE LOCK STATUS
@@ -99,9 +112,37 @@ LOCKEY:             LDA     LOCKSTAT        ; LOAD LOCK STATUS ($00 = LOCK OFF, 
                     LDA     #0              ; CLEAR ACCU TO PREVENT STORING DATA INTO BUFFER
                     RTS                     ; RETURN TO MAIN LOOP
 LOCKEY_ON:          JSR     CAPSLEDON
-                    LDA     #0              ; CLEAR ACCU TO PREVENT STORING DATA INTO BUFFER
+ENDSPECIALKEY:      LDA     #0              ; CLEAR ACCU TO PREVENT STORING DATA INTO BUFFER
                     RTS                     ; RETURN TO MAIN LOOP
 
+; SET ANSI CODES FOR HORIZONTAL CURSOR IN BUFFER
+HCURSOR:            JSR     TESTSHIFT       ; TEST IF SHIFT PRESSED
+                    BNE     HCURSOR_R       ; NOT SHIFTED, MOVE RIGHT
+HCURSOR_L:          LDA     #'D'            ; LOAD VALUE
+ACURSOR:            PHA                     ; SAVE VALUE ON STACK
+                    LDA     #$1B            ; SEND ESCAPE SEQUENCE
+                    JSR     STOREKEY
+                    LDA     #'['
+                    JSR     STOREKEY
+                    PLA                     ; GET DATA BACK
+                    JSR     STOREKEY
+                    BNE     ENDSPECIALKEY   ; RETURN
+HCURSOR_R:          LDA     #'C'            ; LOAD VALUE
+                    BNE     ACURSOR         ; STORE IN BUFFER     
+
+VCURSOR:            JSR     TESTSHIFT       ; TEST IF SHIFT PRESSED
+                    BNE     VCURSOR_U       ; NOT SHIFTED, MOVE UP
+VCURSOR_D:          LDA     #'B'            ; LOAD VALUE
+                    BNE     ACURSOR         ; STORE IN BUFFER
+VCURSOR_U:          LDA     #'A'            ; LOAD VALUE
+                    BNE     ACURSOR         ; STORE IN BUFFER
+
+COPYKEY:            LDY     #6              ; HANDLE AS CTRL+I (TAB, CURSOR RIGHT)
+                    JMP     KEY2ASCI1
+
+TESTSHIFT:          LDA     PORTB           ; LOAD B PORT STATUS
+                    AND     #$80            ; MASK ALL BITS EXCEPT SHIFT
+                    RTS                     ; RETURN
 KEY_TABLE:          
                     .byte   ' '             ; SCAN CODE $00, SPACE BAR
                     .byte   '['             ; SCAN CODE $01, [
@@ -176,7 +217,7 @@ KEY_SHIFT:
                     .byte   '{'             ; SCAN CODE $01, [
                     .byte   '|'             ; SCAN CODE $02, \
                     .byte   '}'             ; SCAN CODE $03, ]
-                    .byte   '_'             ; SCAN CODE $04, ^
+                    .byte   '~'             ; SCAN CODE $04, ^
                     .byte   $00             ; SCAN CODE $05, LOCK
                     .byte   $08             ; SCAN CODE $06, ARROW HOR
                     .byte   $0A             ; SCAN CODE $07, ARROW VERT
@@ -189,7 +230,7 @@ KEY_SHIFT:
                     .byte   $00             ; SCAN CODE $0E, COPY
                     .byte   $7F             ; SCAN CODE $0F, DELETE
 
-                    .byte   '0'             ; SCAN CODE $10, 0
+                    .byte   '_'             ; SCAN CODE $10, 0
                     .byte   '!'             ; SCAN CODE $11, 1!
                     .byte   '"'             ; SCAN CODE $12, 2"
                     .byte   '#'             ; SCAN CODE $13, 3#
@@ -206,7 +247,7 @@ KEY_SHIFT:
                     .byte   '>'             ; SCAN CODE $1E, .>
                     .byte   '?'             ; SCAN CODE $1F, /?
 
-                    .byte   '@'             ; SCAN CODE $20, @
+                    .byte   '`'             ; SCAN CODE $20, @
                     .byte   'A'             ; SCAN CODE $21, A
                     .byte   'B'             ; SCAN CODE $22, B
                     .byte   'C'             ; SCAN CODE $23, C
@@ -245,7 +286,7 @@ KEY_CTRL:
                     .byte   $00             ; SCAN CODE $01, [
                     .byte   $00             ; SCAN CODE $02, \
                     .byte   $00             ; SCAN CODE $03, ]
-                    .byte   '~'             ; SCAN CODE $04, ^
+                    .byte   $00             ; SCAN CODE $04, ^
                     .byte   $00             ; SCAN CODE $05, LOCK
                     .byte   $00             ; SCAN CODE $06, ARROW HOR
                     .byte   $00             ; SCAN CODE $07, ARROW VERT
@@ -271,7 +312,7 @@ KEY_CTRL:
                     .byte   $00             ; SCAN CODE $1A, :*
                     .byte   $1C             ; SCAN CODE $1B, ;+
                     .byte   $1D             ; SCAN CODE $1C, ,<
-                    .byte   '_'             ; SCAN CODE $1D, -=
+                    .byte   $00             ; SCAN CODE $1D, -=
                     .byte   $1E             ; SCAN CODE $1E, .>
                     .byte   $1F             ; SCAN CODE $1F, /?
 

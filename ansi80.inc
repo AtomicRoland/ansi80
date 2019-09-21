@@ -32,7 +32,7 @@ vga80l1:
 ;      0    6    7   8   9   #A  #B  #C  #D  #E  #F  #15  #1B
 
         ; TEST FOR CONTROL CODES
-LFCEA:          ldx     quelen          ; check if character must be stored in the queue
+LFCEA:          ldx     quelen          ; check if character must be stored in the queue (quelen > 0?)
                 beq     notque          ; no, continue with printing
                 cmp     #'['            ; test for bracket i.e. start of sequence
                 bne     q1              ; no, continue 
@@ -40,6 +40,9 @@ LFCEA:          ldx     quelen          ; check if character must be stored in t
                 beq     qstore          ; yes, store it also in the queue
                 bne     qproc           ; else consider this as end-of-sequence
                 
+; TODO: stop queing if the second character of the sequence is not [
+; At the moment it does not matter whether the [ is send or not. But it matters
+; when executing the sequence.
 
                 ; Now we are storing data into the queue. Store only digits and semi-colons
 q1:             cmp     #';'            ; is it a semi-colon?
@@ -62,9 +65,11 @@ notque:         cmp     #$1B            ; is it escape
                 rts                     ; end of print routine
 
 ; Start processing the queue
-qproc:          jsr     qdecode         ; read the parameters and store them as digits in the queue
-                dey                     ; calculate queue length
-                dey
+; On entrance of this routine:
+; A - holds the last receive character of the sequence (the "command" letter)
+; quelen holds the number of charachters in the queue WITHOUT the last character (as this is not in the queue)
+; X and Y are undefined
+qproc:          jsr     qdecode         ; read the parameters and store them as digits in the queue and Y has the number of bytes in the queue
                 sty     quelen          ; save the queue length
                 jsr     exequete        ; execute the code
                 lda     #0              ; reset queue length
@@ -841,25 +846,26 @@ LFDF2K:
 
 ;               Execute the extended VDU codes
 
-; set cursor position to x (queue+2) , y (queue+3)
+; set cursor position to x (decoque+1) , y (decoque)
 exevdu31:       jsr     cursor_off      ; cursor off at old position
                 lda     #$80            ; cursor position to y
                 sta     $df
                 lda     #$00
                 sta     $de
-                ldy     queue+3
+                ldy     decoque         ; load the new line number
+vdu31l1:        dey                     ; decrement y for the loop
                 beq     vdu31l2         ; jump if y=0 (upper row)
-vdu31l1:        clc
+                clc
                 lda     $de
                 adc     #NUMCOLS
                 sta     $de
                 lda     $df
                 adc     #0
                 sta     $df
-                dey
-                bne     vdu31l1
-vdu31l2:        lda     queue+2         ; cursor position to x
-                sta     $e0
+                jmp     vdu31l1
+vdu31l2:        ldx     decoque+1       ; cursor position to x
+                dex                     ; decrement it (ansi starts line with pos 1, Atom starts from 0)
+                stx     $e0
                 ; jsr     lfd44         ; invert char at current cursor position
                 rts
 
@@ -998,7 +1004,7 @@ LF6C4:          sta     $8000,y
                 beq     LF6AB
 
 
-exevdu18:       lda     queue+2         ; load mode (I use it for palette)
+exevdu18:       lda     decoque         ; load mode (I use it for palette)
                 bne     palette1        ; jmp if non-zero (i.e. palette 1)
                 lda     $B002           ; load current video controller setting
                 and     #$F7            ; reset bit 4
@@ -1168,16 +1174,33 @@ vga32l1:        LDA     $FF9E,Y
 
 ; Read the characters in the queue and convert them to hexadecimal codes; these will be stored in the queue. When this routine is
 ; called the queue starts with <ESC>[ followed by max 127 characters of the sequence.
+
+; parameters when called:
+; A - holds the last receive character of the sequence (the "command" letter)
+; quelen holds the number of charachters in the queue WITHOUT the last character (as this is not in the queue) but including the leading <esc> and [
+; X and Y are undefined
+
+; On exit the queue has changed:
+; first byte (queue) holds the "command" letter
+; second byte (queue+1) is undefined (it's used as workspace)
+; from the third byte (decoque) the parameters are stored as binary data
+; the Y register holds the number of bytes in the decoded queue
+ 
 qdecode:        sta     queue           ; this is the last character of the sequence. Store it as command
-                lda     #0              ; location queue + 1 will be used as workspace for decoding
+                lda     quelen          ; check if parameters in queue
+                cmp     #2              ; there are only params if length > 2: first one is 0x1B, second one is 0x5B ([)
+                bne     qdec0
+                ldy     #0              ; set (dummy) pointer to the start of decoded data
+                rts
+qdec0:          lda     #0              ; location queue + 1 will be used as workspace for decoding
                 sta     queue+1         ; clear this workspace
                 ldx     #2              ; load (read) pointer to start of sequence parameters
-                ldy     #2              ; load (write) pointer to start of decoded data
+                ldy     #0              ; load (write) pointer to start of decoded data
 qdec1:          lda     queue,x         ; load character
                 cmp     #';'            ; is it a semi-colon?
                 bne     qdec3           ; no, continue
 qdec2:          lda     queue+1         ; load decoded data
-                sta     queue,y         ; store in queue (yes, we overwrite the original sequence but that's no problem)
+                sta     decoque,y       ; store in queue (yes, we overwrite the original sequence but that's no problem)
                 lda     #0              ; clear workspace
                 sta     queue+1       
                 iny                     ; increment write pointer
@@ -1187,7 +1210,7 @@ qdec2:          lda     queue+1         ; load decoded data
                 rts                     ; end of decode, return
 qdec3:          sec                     ; set carry for substraction
                 sbc     #'0'            ; "convert" to binary value of ascii byte
-                jsr     mul10           ; add this to the workspace
+                jsr     mul10           ; add this to the workspace (new binary value goes into queue+1)
                 inx                     ; increment read pointer
                 cpx     quelen          ; last character read?
                 bne     qdec1           ; no, read the next one
@@ -1211,8 +1234,16 @@ mul10:          pha                     ; save A
                 rts                     ; finished, return
 
 ; Execute the command
+; At calling this routine:
+; queue holds the "command" letter
+; decoque (and following) hold the binary decoded parameters
+; Y and quelen contain the number of paramaters
+; A and X are undefined
+
 exequete:       lda     queue           ; load command byte
-                ldx     queue+1         ; reset index register to start of parameters
+                ; I think the next one should be ldx #0 
+                ; On second thought ... it seems not to be used, so remove it.
+                ;                ldx     queue+1         ; reset index register to start of parameters
                 cmp     #'H'            ; check for command cursor position
                 bne     exe1
                 jmp     cursor_pos
@@ -1250,12 +1281,18 @@ exe11:
                 rts                     ; 
 
 ; Move the cursor to the specified position
-cursor_pos:     jmp     exevdu31        ; set cursor to new position
+cursor_pos:     cpy     #0              ; test if any parameters in the queue
+                bne     cursor_pos1     ; no, then jump
+                iny                     ; load Y with 1 (shorter and way faster than LDY #1)
+                sty     decoque         ; set new position to 1,1 (upper left corner)
+                sty     decoque+1
+cursor_pos1:    jmp     exevdu31        ; set cursor to new position
 
 ; Move the cursor up  
-cursor_up:      ldy     curXpos
+cursor_up:      jsr     cursor_1        ; check if any parameters given, if not then set parameter to 1
+                ldy     curXpos
                 jsr     cursor_off      ; turn cursor off
-                ldy     queue+2         ; load number of rows
+                ldy     decoque         ; load number of rows
 cursor_up0:     lda     $de             ; check low byte upper row
                 bne     cursor_up1      ; not upper row
                 lda     $df             ; check high byte of upper row
@@ -1273,9 +1310,10 @@ cursor_up1:     sec                     ; calculate address of previous row
 cursor_up2:     rts                     ; end of routine
 
 ; Move the cursor down
-cursor_down:    ldy     curXpos
+cursor_down:    jsr     cursor_1        ; check if any parameters given, if not then set parameter to 1
+                ldy     curXpos
                 jsr     cursor_off      ; turn cursor off
-                ldy     queue+2         ; load number of rows
+                ldy     decoque         ; load number of rows
 cursor_down0:   lda     $de             ; check for low byte bottom row
                 cmp     #$30            ; bottom row starts at $8C30
                 bne     cursor_down1    ; not bottom row
@@ -1295,9 +1333,10 @@ cursor_down2:   rts                     ; end of routine
 
 
 ; Move the cursor backward
-cursor_back:    lda     curXpos         ; load current X position               
+cursor_back:    jsr     cursor_1        ; check if any parameters given, if not then set parameter to 1
+                lda     curXpos         ; load current X position               
                 sec                     ; set carry for substraction
-                sbc     queue+2         ; substract number of lines
+                sbc     decoque         ; substract number of lines
                 bpl     cursor_back1    ; jump if not before left screen border
                 lda     #0              ; otherwise load left column number 
 cursor_back1:   ldy     curXpos
@@ -1306,13 +1345,21 @@ cursor_back1:   ldy     curXpos
                 rts
 
 ; Move the cursor forward
-cursor_forw:    lda     curXpos         ; load current X position               
+cursor_forw:    jsr     cursor_1        ; check if any parameters given, if not then set parameter to 1
+                lda     curXpos         ; load current X position               
                 clc                     ; reset carry for addition
-                adc     queue+2         ; substract number of lines
+                adc     decoque         ; substract number of lines
                 cmp     #80             ; test for right border of screen
                 bmi     cursor_forw1    ; jump if not below screen border
                 lda     #79             ; otherwise load right column number 
 cursor_forw1:   jmp     cursor_back1    ; set cursor to new position
+
+; Check if any parameters given, if none given then default to 1
+cursor_1:       cpy     #0              ; load queue length
+                bne     cursor_2        ; if not zero jump to end of routine
+                lda     #1              ; load default value 1
+                sta     decoque
+cursor_2:       rts                     ; return to calling routine
 
 ; Save cursor position  
 cursor_save:    lda     curXpos         ; copy cursor position
@@ -1337,7 +1384,7 @@ clear_screen:   jmp     LFD69           ; do your job
 ; Clear line (from cursor position until end of the line)
 erase_line:     ldy     $e0             ; load current cursor position
                 lda     #20             ; load space character
-erase_line1:    cmp     #79             ; check for end of line
+erase_line1:    cpy     #79             ; check for end of line
                 beq     erase_line2     ; jmp when at the end of line
                 sta     ($df),y         ; erase character
                 iny                     ; next position
@@ -1348,6 +1395,8 @@ graphics_mode:  ldy     #0              ; init pointer
 gm_loop:        iny                     ; increment pointer
                 lda     queue+1,y       ; load attribute data
                 beq     gm_attr_off     ; #0 = all attributes off
+                cmp     #'m'            ; Some programs (like man command) use [m for clearing all attributes
+                beq     gm_attr_off
                 cmp     #4              ; #4 = underline on
                 beq     gm_underline    
                 cmp     #7              ; #7 = reverse video

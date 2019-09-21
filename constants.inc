@@ -30,6 +30,7 @@ ctrlcode = vduque+11
 curXpos  = $e0
 curYpos  = $de
 queue    = $500         ; ANSI SEQUENCE QUEUE
+decoque  = $502         ; DECODED QUEUE
 INPUTBUF = $580         ; KEYBOARD INPUT BUFFER
 KEYRDPTR = $84          ; KEYBOARD READ POINTER
 KEYWRPTR = $85          ; KEYBOARD WRITE POINTER
@@ -46,9 +47,13 @@ RDCVEC   = $020A
 KEYSCAN  = $FE71		; KEYBOARD SCAN ROUTINE
 WAIT     = $FB8C        ; SHORT WAIT
 
+; For VGA80 screens
+;NUMROWS = 40
+;NUMCOLS = 80
 
-NUMROWS = 40
-NUMCOLS = 80
+; Standard Atom vdu
+NUMROWS = 16
+NUMCOLS = 32
 
 SCREEN = $8000
 SCREENEND = SCREEN + (NUMROWS - 1) * NUMCOLS
