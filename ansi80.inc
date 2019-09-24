@@ -846,13 +846,16 @@ LFDF2K:
 
 ;               Execute the extended VDU codes
 
-; set cursor position to x (decoque+1) , y (decoque)
-exevdu31:       jsr     cursor_off      ; cursor off at old position
+; set cursor position to x (decoque+1) , y (decoque)  { x and y do not refer to the registers in this comment!)
+exevdu31:       ldy     curXpos         ; load current position (column) on the current line
+                jsr     cursor_off      ; cursor off at old position
                 lda     #$80            ; cursor position to y
                 sta     $df
                 lda     #$00
                 sta     $de
                 ldy     decoque         ; load the new line number
+                bne     vdu31l1         ; jump if it's not 0
+                iny                     ; Zero is most likely an omitted value and is not allowed, so change it to 1
 vdu31l1:        dey                     ; decrement y for the loop
                 beq     vdu31l2         ; jump if y=0 (upper row)
                 clc
@@ -864,8 +867,9 @@ vdu31l1:        dey                     ; decrement y for the loop
                 sta     $df
                 jmp     vdu31l1
 vdu31l2:        ldx     decoque+1       ; cursor position to x
+                beq     vdu31l3         ; jump if it is 0, probably an omitted value
                 dex                     ; decrement it (ansi starts line with pos 1, Atom starts from 0)
-                stx     $e0
+vdu31l3:        stx     curXpos
                 ; jsr     lfd44         ; invert char at current cursor position
                 rts
 
@@ -1199,6 +1203,10 @@ qdec0:          lda     #0              ; location queue + 1 will be used as wor
 qdec1:          lda     queue,x         ; load character
                 cmp     #';'            ; is it a semi-colon?
                 bne     qdec3           ; no, continue
+                ; from here we're decoding a numeric value string into binary values. However, if the escape sequence contains
+                ; two semi-colons after each other, there is no numeric string. This will default to a value of 0 which is 
+                ; correct according to the specs. 
+                ; However, some of the "commands" need a default value of 1 so you have to take care of those exceptions.
 qdec2:          lda     queue+1         ; load decoded data
                 sta     decoque,y       ; store in queue (yes, we overwrite the original sequence but that's no problem)
                 lda     #0              ; clear workspace
@@ -1379,18 +1387,77 @@ cursor_restore: lda     saveXpos        ; copy old cursor position
                 rts
 
 ; Clear screen
-clear_screen:   jmp     LFD69           ; do your job
+; Parameters: value of decoque = n
+; Clears part of the screen. If n is 0 (or missing), clear from cursor to end of screen. If n is 1,
+; clear from cursor to beginning of the screen. If n is 2, clear entire screen (and moves cursor to 
+; upper left on DOS ANSI.SYS). If n is 3, clear entire screen and delete all lines saved in the 
+; scrollback buffer (this feature was added for xterm and is supported by other terminal applications). 
+clear_screen:   lda     decoque         ; load n
+                beq     clear_to_end    
+                cmp     #1  
+                beq     clear_to_begin
+                lda     #<SCREEN        ; clear the entire screen, set start address of screen
+                sta     CLRSTART
+                lda     #>SCREEN
+                sta     CLRSTART+1
+clear_screen1:  lda     #<SCREENEND     ; set end address of screen
+                sta     CLREND
+                lda     #>SCREENEND
+                sta     CLREND+1
+                jmp     clearscrn       ; clear the screen
 
-; Clear line (from cursor position until end of the line)
-erase_line:     ldy     $e0             ; load current cursor position
-                lda     #20             ; load space character
-erase_line1:    cpy     #79             ; check for end of line
-                beq     erase_line2     ; jmp when at the end of line
-                sta     ($df),y         ; erase character
-                iny                     ; next position
-                bne     erase_line1     ; jumps always
-erase_line2:    rts                     ; end of routine
-                
+clear_to_end:   ldy     #0              ; load pointer
+                jsr     clr_cur_pos     ; set cursor address in start address
+                jmp     clear_screen1   ; continue like clear screen
+
+clear_to_begin: ldy     #2              ; load pointer
+                jsr     clr_cur_pos     ; set cursor address in end address
+                lda     #<SCREEN        ; clear the entire screen, set start address of screen
+                sta     CLRSTART
+                lda     #>SCREEN
+                sta     CLRSTART+1
+                jmp     clearscrn       ; clear the screen
+
+; Clear line 
+; Parameters: value of decoque = n
+; Erases part of the line. If n is 0 (or missing), clear from cursor to the end of the line. 
+; If n is 1, clear from cursor to beginning of the line. If n is 2, clear entire line. Cursor 
+; position does not change.
+erase_line:     lda     decoque         ; load n
+                beq     erase_to_end    
+                cmp     #1
+                beq     erase_to_begin
+                lda     curYpos         ; erase entire line
+                clc                     ; clear carry for addition
+                sta     CLRSTART        ; set start address of line
+                adc     #NUMCOLS        ; calculate end address
+                sta     CLREND
+                lda     curYpos+1      
+                sta     CLRSTART+1
+                adc     #0
+                sta     CLREND+1
+                jmp     clearscrn       ; clear the line
+
+erase_to_end:   ldy     #0              ; load index
+                jsr     clr_cur_pos     ; set start address for clearing
+                lda     curYpos         ; set end address of line
+                clc                     ; clear carry for addition
+                adc     #NUMCOLS        ; calculate end address
+                sta     CLREND
+                lda     curYpos+1      
+                adc     #0
+                sta     CLREND+1
+                jmp     clearscrn       ; clear the line from cursor to end
+
+erase_to_begin: ldy     #2              ; load index
+                jsr     clr_cur_pos     ; set end address for clearing
+                lda     curYpos         ; set begin address of line
+                sta     CLRSTART
+                lda     curYpos+1
+                sta     CLRSTART+1
+                jmp     clearscrn       ; clear the line from begin to cursor
+             
+
 graphics_mode:  ldy     #0              ; init pointer
 gm_loop:        iny                     ; increment pointer
                 lda     queue+1,y       ; load attribute data
@@ -1461,6 +1528,32 @@ gm_consealed:   lda     attrib          ; load current attribute
                 and     #$F8            ; clear fg colour bits
                 sta     temp            ; store in workspace
                 jmp     gm_reverse1     ; 
+
+; clears (a part of) the screen. Parameters:
+; - CLRSTART    start address of area to clear
+; - CLREND      end address of area to clear
+clearscrn:      ldy     #0              ; reset pointer
+clearscrn1:     lda     #' '            ; load value for space
+                sta     (CLRSTART),y    ; write to video memory
+                inc     CLRSTART        ; increment pointer
+                bne     clearscrn2 
+                inc     CLRSTART+1
+clearscrn2:     lda     CLRSTART+1      ; test for end of area to clear
+                cmp     CLREND+1
+                bne     clearscrn1      ; not equal, continue to next address
+                lda     CLRSTART  
+                cmp     CLREND
+                bne     clearscrn1      ; not equal, continue to next address
+                rts
+
+clr_cur_pos:    lda     curYpos         ; load low byte Y position of cursor address
+                clc                     ; clear carry for addition
+                adc     curXpos         ; add X position of cursor address
+                sta     ZP,y            ; store in workspace
+                lda     curYpos+1       ; load high byte Y position of cursor address
+                adc     #0              ; add carry
+                sta     ZP+1,y          ; store in workspace
+                rts                     ; return
 
 colourtabfg:    .byte   $00             ; black
                 .byte   $04             ; red
