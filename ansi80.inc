@@ -1532,6 +1532,7 @@ gm_consealed:   lda     attrib          ; load current attribute
 ; clears (a part of) the screen. Parameters:
 ; - CLRSTART    start address of area to clear
 ; - CLREND      end address of area to clear
+; Return: A, Y undefined; X unchanged
 clearscrn:      ldy     #0              ; reset pointer
 clearscrn1:     lda     #' '            ; load value for space
                 sta     (CLRSTART),y    ; write to video memory
@@ -1573,3 +1574,62 @@ colourtabbg:    .byte   $00             ; black
                 .byte   $30             ; cyan
                 .byte   $70             ; white
                 .word   $0000           ; ignored, also black
+
+; Scroll routines
+; Number of lines to scroll in X register. On exit all registers are undefined.
+
+scroll_up:      jsr     cursor_off      ; turn cursor off
+scroll_up0:     lda     #<(SCREEN+NUMCOLS); set orig address of copy in workspace
+                sta     SCRNORIG        
+                lda     #>(SCREEN+NUMCOLS)
+                sta     SCRNORIG+1
+                lda     #<SCREEN        ; set dest address of copy in workspace
+                sta     SCRNDEST
+                lda     #>SCREEN
+                sta     SCRNDEST+1
+                lda     #<(SCREENEND+NUMCOLS*2);  set orig address of attributes in workspace
+                sta     ATTRORIG
+                lda     #>(SCREENEND+NUMCOLS*2)
+                sta     ATTRORIG+1
+                lda     #<(SCREENEND+NUMCOLS)   ; set dest address of attributes in workspace
+                sta     ATTRDEST
+                lda     #>(SCREENEND+NUMCOLS)
+                sta     ATTRDEST+1
+                ldy     #0              ; clear index register
+scroll_up1:     lda     (SCRNORIG),y    ; load byte
+                sta     (SCRNDEST),y    ; store byte
+                lda     (ATTRORIG),y    ; load attribute
+                sta     (ATTRDEST),y    ; store attribute
+                inc     SCRNORIG        ; increment all pointers (orig + dest)
+                bne     *+4
+                inc     SCRNORIG+1   
+                inc     SCRNDEST
+                bne     *+4
+                inc     SCRNDEST+1
+                inc     ATTRORIG
+                bne     *+4
+                inc     ATTRORIG+1
+                inc     ATTRDEST
+                bne     *+4
+                inc     ATTRDEST+1
+                lda     SCRNORIG+1      ; check if last address for copy is reached
+                cmp     #>(SCREENEND+NUMCOLS)     ; compare source pointer to end address
+                bne     scroll_up1      ; not equal, jump for next byte
+                lda     SCRNORIG
+                cmp     #<(SCREENEND+NUMCOLS)
+                bne     scroll_up1
+scroll_up2:     lda     #<SCREENEND     ; clear the bottom line
+                sta     CLRSTART        ; set first address (begin of line)
+                lda     #>SCREENEND
+                sta     CLRSTART+1
+                lda     #<(SCREENEND+NUMCOLS)     ; set last address (end of line)
+                sta     CLREND
+                lda     #>(SCREENEND+NUMCOLS)
+                sta     CLREND+1
+                jsr     clearscrn       ; clear the line
+                dex                     ; decrement loop counter
+                bne     scroll_up0      ; repeat loop if not ended yet
+                rts                     ; return 
+
+
+                
