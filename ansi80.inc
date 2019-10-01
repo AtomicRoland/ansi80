@@ -1285,7 +1285,13 @@ exe9:           cmp     #'J'            ; check for clear screen
 exe10:          cmp     #'m'            ; check for graphics mode
                 bne     exe11
                 jmp     graphics_mode
-exe11:
+exe11:          cmp     #'S'            ; check for scroll up
+                bne     exe12
+                jmp     scroll_up
+exe12:          cmp     #'T'            ; check for scroll down
+                bne     exe13
+                jmp     scroll_dn
+exe13:
                 rts                     ; 
 
 ; Move the cursor to the specified position
@@ -1564,7 +1570,8 @@ colourtabfg:    .byte   $00             ; black
                 .byte   $05             ; magenta
                 .byte   $03             ; cyan
                 .byte   $07             ; white
-                .word   $0000           ; ignored, also black
+                .byte   $00             ; ignored, also black
+                .byte   DefaultAttrib   ; default colour
 colourtabbg:    .byte   $00             ; black
                 .byte   $40             ; red
                 .byte   $20             ; green
@@ -1573,12 +1580,16 @@ colourtabbg:    .byte   $00             ; black
                 .byte   $50             ; magenta
                 .byte   $30             ; cyan
                 .byte   $70             ; white
-                .word   $0000           ; ignored, also black
+                .byte   $00             ; ignored, also black
+                .byte   (DefaultAttrib/16)*16; default background colour
+
 
 ; Scroll routines
-; Number of lines to scroll in X register. On exit all registers are undefined.
+; Number of lines to scroll in decoque. On exit all registers are undefined.
 
-scroll_up:      jsr     cursor_off      ; turn cursor off
+scroll_up:      jsr     cursor_1        ; check if parameters given, if not then default to 1
+                ldx     decoque         ; load number of lines to scroll
+                jsr     cursor_off      ; turn cursor off
 scroll_up0:     lda     #<(SCREEN+NUMCOLS); set orig address of copy in workspace
                 sta     SCRNORIG        
                 lda     #>(SCREEN+NUMCOLS)
@@ -1629,6 +1640,65 @@ scroll_up2:     lda     #<SCREENEND     ; clear the bottom line
                 jsr     clearscrn       ; clear the line
                 dex                     ; decrement loop counter
                 bne     scroll_up0      ; repeat loop if not ended yet
+                rts                     ; return 
+
+scroll_dn:      jsr     cursor_1        ; check if parameters given, if not then default to 1
+                ldx     decoque         ; load number of lines to scroll
+                jsr     cursor_off      ; turn cursor off
+scroll_dn0:     lda     #<(SCREEN+NUMCOLS*(NUMROWS-1)-1); set orig address of copy in workspace
+                sta     SCRNORIG        
+                lda     #>(SCREEN+NUMCOLS*(NUMROWS-1)-1)
+                sta     SCRNORIG+1
+                lda     #<(SCREEN+NUMCOLS*NUMROWS-1)        ; set dest address of copy in workspace
+                sta     SCRNDEST
+                lda     #>(SCREEN+NUMCOLS*(NUMROWS)-1)
+                sta     SCRNDEST+1
+                lda     #<(SCREENEND+NUMCOLS*2+NUMCOLS*(NUMROWS-1)-1);  set orig address of attributes in workspace
+                sta     ATTRORIG
+                lda     #>(SCREENEND+NUMCOLS*2+NUMCOLS*(NUMROWS-1)-1)
+                sta     ATTRORIG+1
+                lda     #<(SCREENEND+NUMCOLS*2+(NUMCOLS*NUMROWS-1))   ; set dest address of attributes in workspace
+                sta     ATTRDEST
+                lda     #>(SCREENEND+NUMCOLS*2+(NUMCOLS*NUMROWS-1))
+                sta     ATTRDEST+1
+                ldy     #0              ; clear index register
+scroll_dn1:     lda     (SCRNORIG),y    ; load byte
+                sta     (SCRNDEST),y    ; store byte
+                lda     (ATTRORIG),y    ; load attribute
+                sta     (ATTRDEST),y    ; store attribute
+                dec     SCRNORIG        ; increment all pointers (orig + dest)
+                lda     SCRNORIG        ; check on overflow
+                cmp     #$FF
+                bne     *+4
+                dec     SCRNORIG+1   
+                dec     SCRNDEST
+                lda     SCRNDEST
+                cmp     #$FF
+                bne     *+4
+                dec     SCRNDEST+1
+                dec     ATTRORIG
+                lda     ATTRORIG
+                cmp     #$FF
+                bne     *+4
+                dec     ATTRORIG+1
+                dec     ATTRDEST
+                lda     ATTRDEST
+                cmp     #$FF
+                bne     *+4
+                dec     ATTRDEST+1
+                lda     SCRNORIG+1      ; check if last address for copy is reached
+                bmi     scroll_dn1      ; if it's still negative then address >= 8000 which is first address of video memory
+scroll_dn2:     lda     #<SCREEN        ; clear the top line
+                sta     CLRSTART        ; set first address (begin of line)
+                lda     #>SCREEN
+                sta     CLRSTART+1
+                lda     #<(SCREEN+NUMCOLS)     ; set last address (end of line)
+                sta     CLREND
+                lda     #>(SCREEN+NUMCOLS)
+                sta     CLREND+1
+                jsr     clearscrn       ; clear the line
+                dex                     ; decrement loop counter
+                bne     scroll_dn0      ; repeat loop if not ended yet
                 rts                     ; return 
 
 
