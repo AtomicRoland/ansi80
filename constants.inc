@@ -54,12 +54,12 @@ KEYSCAN  = $FE71		; KEYBOARD SCAN ROUTINE
 WAIT     = $FB8C        ; SHORT WAIT
 
 ; For VGA80 screens
-; NUMROWS = 40
-; NUMCOLS = 80
+NUMROWS = 40
+NUMCOLS = 80
 
 ; Standard Atom vdu (mostly used for testing and developing)
-NUMROWS = 16
-NUMCOLS = 32
+;NUMROWS = 16
+;NUMCOLS = 32
 
 SCREEN = $8000
 SCREENEND = SCREEN + (NUMROWS - 1) * NUMCOLS

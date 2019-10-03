@@ -186,7 +186,6 @@ LFD42:  sty     $E0             ; Update current cursor position register
 ;    ?#E1.
 ;  - A, X, Y registers preserved.
 
-cursor_on:
 LFD44:
         pha                     ; Save character in accumulator
         lda ($DE),Y             ; Get character at current print position
@@ -199,9 +198,18 @@ cursor_off:
         pha                     ; Save character in accumulator
         lda ($DE),Y             ; Get character at current print position
         and #$7F                ; Mask it
-        sta ($DE),Y             ; ..and return it to the screen
+co:     sta ($DE),Y             ; ..and return it to the screen
         pla                     ; Restore character to accumulator
         rts
+
+cursor_on:
+        pha                     ; Save character in accumulator
+        ldy curXpos             ; load cursor position on line
+        lda ($DE),Y             ; Get character at current print position
+        ora #$80                ; Mask it
+        bne co                  ; jump always
+        
+
 
 ;    Handle <DEL> subroutine
 ;    -----------------------
@@ -871,6 +879,7 @@ vdu31l2:        ldx     decoque+1       ; cursor position to x
                 dex                     ; decrement it (ansi starts line with pos 1, Atom starts from 0)
 vdu31l3:        stx     curXpos
                 ; jsr     lfd44         ; invert char at current cursor position
+                jsr     cursor_on       ; turn cursor on
                 rts
 
 exevdu17:       ; set foreground colour, actual setting of attribute should be handled by print routine
@@ -1321,7 +1330,8 @@ cursor_up1:     sec                     ; calculate address of previous row
                 sta     $df
                 dey                     ; check if more lines to move
                 bne     cursor_up0      ; yes, repeat loop
-cursor_up2:     rts                     ; end of routine
+cursor_up2:     jsr     cursor_on       ; turn cursor on
+                rts                     ; end of routine
 
 ; Move the cursor down
 cursor_down:    jsr     cursor_1        ; check if any parameters given, if not then set parameter to 1
@@ -1343,7 +1353,8 @@ cursor_down1:   clc                     ; clear carry for addition
                 sta     $df
                 dey                     ; check if more lines to move
                 bne     cursor_down0    ; yes, repeat loop
-cursor_down2:   rts                     ; end of routine
+cursor_down2:   jsr     cursor_on       ; turn cursor on
+                rts                     ; end of routine
 
 
 ; Move the cursor backward
@@ -1356,6 +1367,7 @@ cursor_back:    jsr     cursor_1        ; check if any parameters given, if not 
 cursor_back1:   ldy     curXpos
                 jsr     cursor_off      ; turn cursor off
                 sta     curXpos         ; set cursor to new position
+                jsr     cursor_on       ; turn cursor on
                 rts
 
 ; Move the cursor forward
@@ -1384,13 +1396,15 @@ cursor_save:    lda     curXpos         ; copy cursor position
                 sta     saveYpos+1
                 rts                     ; end of routine
 
-cursor_restore: lda     saveXpos        ; copy old cursor position
+cursor_restore: ldy     curXpos         ; turn cursor off at current position
+                jsr     cursor_off
+                lda     saveXpos        ; copy old cursor position
                 sta     curXpos         ; store in queue
                 lda     saveYpos        ; same for Y position
                 sta     curYpos
                 lda     saveYpos+1      ; same for Y position
                 sta     curYpos+1
-                rts
+                jmp     cursor_on       ; turn cursor on at old position and end routine
 
 ; Clear screen
 ; Parameters: value of decoque = n
@@ -1398,7 +1412,9 @@ cursor_restore: lda     saveXpos        ; copy old cursor position
 ; clear from cursor to beginning of the screen. If n is 2, clear entire screen (and moves cursor to 
 ; upper left on DOS ANSI.SYS). If n is 3, clear entire screen and delete all lines saved in the 
 ; scrollback buffer (this feature was added for xterm and is supported by other terminal applications). 
-clear_screen:   lda     decoque         ; load n
+clear_screen:   lda     quelen          ; test if parameter is omitted
+                beq     clear_to_end    ; yes it is omitted, so clear from cursor to the end
+                lda     decoque         ; load n
                 beq     clear_to_end    
                 cmp     #1  
                 beq     clear_to_begin
@@ -1540,6 +1556,17 @@ gm_consealed:   lda     attrib          ; load current attribute
 ; - CLREND      end address of area to clear
 ; Return: A, Y undefined; X unchanged
 clearscrn:      ldy     #0              ; reset pointer
+                lda     CLREND          ; if the cursor is at the left upper corner then there is nothing to clean
+                bne     clearscrn0      ; low byte is not $00, so jump to next test
+                lda     CLREND+1
+                cmp     #$80
+                beq     clearscrn3      ; it is $8000, skip routine
+clearscrn0:     lda     CLRSTART        ; if the cursor is at the right bottom corner then there is nothing to clean
+                cmp     #<(SCREENATTR-1)            
+                bne     clearscrn1      ; low byte is not $ff, so start erasing
+                lda     CLRSTART+1
+                cmp     #>(SCREENATTR-1)
+                beq     clearscrn3      ; it is right bottom, skip routine
 clearscrn1:     lda     #' '            ; load value for space
                 sta     (CLRSTART),y    ; write to video memory
                 inc     CLRSTART        ; increment pointer
@@ -1551,7 +1578,7 @@ clearscrn2:     lda     CLRSTART+1      ; test for end of area to clear
                 lda     CLRSTART  
                 cmp     CLREND
                 bne     clearscrn1      ; not equal, continue to next address
-                rts
+clearscrn3:     rts
 
 clr_cur_pos:    lda     curYpos         ; load low byte Y position of cursor address
                 clc                     ; clear carry for addition
