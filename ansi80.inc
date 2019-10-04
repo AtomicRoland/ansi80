@@ -1563,15 +1563,27 @@ clearscrn:      ldy     #0              ; reset pointer
                 beq     clearscrn3      ; it is $8000, skip routine
 clearscrn0:     lda     CLRSTART        ; if the cursor is at the right bottom corner then there is nothing to clean
                 cmp     #<(SCREENATTR-1)            
-                bne     clearscrn1      ; low byte is not $ff, so start erasing
+                bne     clearscrn0a     ; low byte is not $ff, so start erasing
                 lda     CLRSTART+1
                 cmp     #>(SCREENATTR-1)
                 beq     clearscrn3      ; it is right bottom, skip routine
+clearscrn0a:    clc                     ; set start of attributes (= CLRSTART + ROWS*COLS)
+                lda     CLRSTART        
+                adc     #<(CLRSTART + NUMROWS*NUMCOLS)
+                sta     ATTRORIG
+                lda     CLRSTART+1
+                adc     #>(CLRSTART + NUMROWS*NUMCOLS)
+                sta     ATTRORIG+1
 clearscrn1:     lda     #' '            ; load value for space
                 sta     (CLRSTART),y    ; write to video memory
-                inc     CLRSTART        ; increment pointer
-                bne     clearscrn2 
+                lda     attrib          ; load attribute value
+                sta     (ATTRORIG),y    ; write to attribute memory
+                inc     CLRSTART        ; increment data pointer
+                bne     clearscrn1a 
                 inc     CLRSTART+1
+clearscrn1a:    inc     ATTRORIG        ; increment attribute pointer
+                bne     clearscrn2
+                inc     ATTRORIG+1
 clearscrn2:     lda     CLRSTART+1      ; test for end of area to clear
                 cmp     CLREND+1
                 bne     clearscrn1      ; not equal, continue to next address
