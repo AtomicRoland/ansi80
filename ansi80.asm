@@ -20,5 +20,7 @@ StartAddr:
         .include "ansi80.inc"
         .include "ansikb.inc"
         .include "ansifnt.inc"
+        .include "ansigraph.inc"
+
 EndAddr:
 
