@@ -135,6 +135,8 @@ LFD1A:  jmp     $fd1a
 
 LFD29:  cmp     #$20            ; Is the character a control code ?
         bcc     LFD44           ; ..yes, so don't print it
+        and     #$ff            ; Is the character an extended ascii code?
+        bmi     LFD44           ; ..yes, so don't print it
 
 ;        adc     #$1F           ; )
 ;        bmi     LFD33          ; )
@@ -1150,8 +1152,11 @@ clear_to_begin: ldy     #2              ; load pointer
 ; Erases part of the line. If n is 0 (or missing), clear from cursor to the end of the line. 
 ; If n is 1, clear from cursor to beginning of the line. If n is 2, clear entire line. Cursor 
 ; position does not change.
-erase_line:     lda     decoque         ; load n
-                beq     erase_to_end    
+erase_line:     jsr     cursor_off      ; remove cursor from screen
+                lda     quelen          ; are there any parameters?
+                beq     erase_to_end    ; no, start erasing from cursor to the end of the line
+                lda     decoque         ; load n
+                beq     erase_to_end    ; if n = 0 then start erasing from cursor to the end of the line
                 cmp     #1
                 beq     erase_to_begin
                 lda     curYpos         ; erase entire line
@@ -1276,10 +1281,10 @@ clearscrn0:     lda     CLRSTART        ; if the cursor is at the right bottom c
                 beq     clearscrn3      ; it is right bottom, skip routine
 clearscrn0a:    clc                     ; set start of attributes (= CLRSTART + ROWS*COLS)
                 lda     CLRSTART        
-                adc     #<(CLRSTART + NUMROWS*NUMCOLS)
+                adc     #<(NUMROWS*NUMCOLS)
                 sta     ATTRORIG
                 lda     CLRSTART+1
-                adc     #>(CLRSTART + NUMROWS*NUMCOLS)
+                adc     #>(NUMROWS*NUMCOLS)
                 sta     ATTRORIG+1
 clearscrn1:     lda     #' '            ; load value for space
                 sta     (CLRSTART),y    ; write to video memory
