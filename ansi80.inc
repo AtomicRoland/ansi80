@@ -87,7 +87,7 @@ t06:            cmp     #$06            ; Is it <ACK> ?
                 beq     LFD0B           ; ..yes, reset VDG to alphanumeric mode and clear NAK
                 cmp     #$07            ; Is it <BEL> ?
                 beq     LFD1A           ; ..yes, sound a bleep
-                jsr     LFD44           ; Invert char at current cursor position
+                jsr     cursor_off      ; Turn cursor off
                 ldx     #$0A            ; Point to the control code table at #FED5
                 jsr     LFEC5           ; Test character for executable control code
                 bne     LFD29           ; ..it's not an executable control code
@@ -1191,6 +1191,8 @@ erase_to_begin: ldy     #2              ; load index
              
 
 graphics_mode:  ldy     #0              ; init pointer
+                lda     quelen          ; are there any parameters?
+                beq     gm_attr_off     ; no, treat it like a reset command
 gm_loop:        iny                     ; increment pointer
                 lda     queue+1,y       ; load attribute data
                 beq     gm_attr_off     ; #0 = all attributes off
